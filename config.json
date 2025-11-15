@@ -1,5 +1,24 @@
 {
+  // Bot info
   "botname": "MKBot",
   "prefix": "/",
-  "admin": ["admin uid"]
+
+  // All privileged users (owner + admins merged)
+  "privilegedUsers": [
+    "owner_uid",     // Main owner
+    "admin_uid"      // Add more if needed
+  ],
+
+  // Basic settings
+  "language": "en",
+  "timezone": "Asia/Kolkata",
+  "debug": false,
+
+  // Reaction system
+  "reactions": {
+    "enabled": true,           // Turn reactions on/off
+    "success": "✅",           // Used when command runs fine
+    "error": "❌",             // Used when command fails
+    "processing": "⏳"         // Used while waiting
+  }
 }
