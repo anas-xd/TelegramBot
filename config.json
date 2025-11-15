@@ -20,7 +20,12 @@
   },
   "connection": {
     "mode": "auto",
-    "webhookDomain": "",
+    "webhookDomain": "https://telegrambot-wos1.onrender.com",
+    "webhookPath": "/webhook",
+    "webhookPort": 3000
+  },
+  "webhookURL": ""
+}",
     "webhookPath": "/webhook",
     "webhookPort": 3000
   },
