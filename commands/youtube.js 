@@ -1,261 +1,206 @@
+/**
+ *  YOUTUBE PRO MODULE
+ *  Clean • Stable • Fast • Inline Search • Auto Fallback • MP4/MP3
+ */
+
 const axios = require("axios");
 const fs = require("fs");
 const crypto = require("crypto");
 
-const baseApiUrl = async () => {
-  const base = await axios.get("https://raw.githubusercontent.com/Blankid018/D1PT0/main/baseApiUrl.json");
-  return base.data.api;
+/* ---------------------- BASIC HELPERS ---------------------- */
+
+const getAPI = async () => {
+  const res = await axios.get(
+    "https://raw.githubusercontent.com/Blankid018/D1PT0/main/baseApiUrl.json"
+  );
+  return res.data.api;
 };
 
-function genToken() {
-  return crypto.randomBytes(6).toString("hex");
+const token = () => crypto.randomBytes(6).toString("hex");
+
+const ytRegex =
+  /^(?:https?:\/\/)?(?:m\.|www\.)?(?:youtube\.com\/|youtu\.be\/)/i;
+
+/* -------------------- DOWNLOAD FUNCTION -------------------- */
+
+async function downloadAndSend(ctx, videoID, format = "mp4") {
+  const api = await getAPI();
+  const qualities = [0, 3, 2, 1];
+
+  for (const q of qualities) {
+    try {
+      const { data } = await axios.get(
+        `${api}/ytDl3?link=${videoID}&format=${format}&quality=${q}`
+      );
+
+      if (!data?.downloadLink) continue;
+
+      const prog = await ctx.reply(
+        `⏳ Downloading *${data.title}*...`,
+        { parse_mode: "Markdown" }
+      );
+
+      const bin = await axios.get(data.downloadLink, {
+        responseType: "arraybuffer",
+        timeout: 120000,
+      });
+
+      const file = `tmp_${videoID}.${format}`;
+      fs.writeFileSync(file, Buffer.from(bin.data));
+
+      try {
+        if (format === "mp4") {
+          await ctx.replyWithVideo({ source: file }, { caption: data.title });
+        } else {
+          await ctx.replyWithAudio({ source: file }, { caption: data.title });
+        }
+
+        await ctx.deleteMessage(prog.message_id).catch(() => {});
+        fs.unlinkSync(file);
+        return true;
+      } catch {
+        fs.unlinkSync(file);
+        await ctx.deleteMessage(prog.message_id).catch(() => {});
+        return ctx.reply(`⚠️ Too large to send. Link:\n${data.downloadLink}`);
+      }
+    } catch {}
+  }
+
+  return ctx.reply("❌ Could not download.");
 }
+
+/* -------------------------- EXPORT -------------------------- */
 
 module.exports = {
   name: "youtube",
   aliases: ["yt", "ytdl"],
   adminOnly: false,
 
+  /* ------------------------- MAIN RUN ------------------------- */
+
   run: async (ctx) => {
     const args = ctx.args || [];
-    if (!args.length) return ctx.reply("❌ Usage: /youtube -v|-a|-i <link|query>");
+    if (!args.length)
+      return ctx.reply("❌ Usage: /yt <link|search> [-v|-a|-i]");
 
-    // detect explicit flags anywhere
-    const flags = args.filter(a => a.startsWith("-")).map(a => a.toLowerCase());
-    const actionFlag = flags[0] || null;
+    const flags = args.filter((a) => a.startsWith("-"));
+    const action =
+      flags[0] ||
+      (["video", "-v"].includes(args[0]) && "video") ||
+      (["audio", "-a"].includes(args[0]) && "audio") ||
+      (["info", "-i"].includes(args[0]) && "info") ||
+      "auto";
 
-    // pick action: flag wins, then first arg if it's -v/-a/-i, else default "auto"
-    const maybeFirst = args[0].toLowerCase();
-    const action = (["-v","-a","-i","video","audio","info"].includes(maybeFirst) ? maybeFirst : actionFlag) || "auto";
+    const clean = args.filter((a) => !a.startsWith("-"));
+    const query = clean.join(" ");
+    const first = clean[0];
 
-    // remove flags and action token from query
-    const filtered = args.filter(a => !a.startsWith("-") && a !== action);
-    const query = filtered.join(" ");
+    /* ------------------- DIRECT LINK MODE ------------------- */
 
-    // auto-detect if first non-flag is a youtube link
-    const firstArg = filtered[0] || "";
-    const ytRegex = /^(?:https?:\/\/)?(?:m\.|www\.)?(?:youtube\.com\/|youtu\.be\/)/i;
-    const isLink = ytRegex.test(firstArg);
+    if (ytRegex.test(first)) {
+      const match = first.match(
+        /(?:v=|youtu\.be\/|shorts\/)([\w-]{11})/
+      );
+      const ID = match?.[1];
 
-    // Helper: attempt download & send (shows progress)
-    async function attemptDownloadAndSend(ctx, videoID, preferFormat = "mp4") {
-      const api = await baseApiUrl();
+      if (!ID) return ctx.reply("❌ Invalid YouTube link.");
 
-      // try best quality first
-      const qualities = preferFormat === "mp4" ? [0,3,2,1] : [0,3,2,1]; // 0 = best if API supports
-      let lastErr = null;
-      for (const q of qualities) {
-        try {
-          const { data } = await axios.get(`${api}/ytDl3?link=${videoID}&format=${preferFormat}&quality=${q}`);
-          if (!data || !data.downloadLink) throw new Error("No download link");
+      if (action === "-i" || action === "info") {
+        const api = await getAPI();
+        const { data } = await axios.get(`${api}/ytfullinfo?videoID=${ID}`);
 
-          // inform user
-          const progress = await ctx.reply(`⏳ Downloading *${data.title}* (${preferFormat})...`, { parse_mode: "Markdown" });
+        const caption = `🎬 *${data.title}*
+⏱ ${(data.duration / 60).toFixed(2)} min
+📺 ${data.resolution}
+👀 ${data.view_count}`;
 
-          // download as buffer
-          const res = await axios.get(data.downloadLink, { responseType: "arraybuffer", timeout: 120000 });
-          fs.writeFileSync(`tmp_${videoID}.${preferFormat}`, Buffer.from(res.data));
-
-          // try to upload; if too big Telegram will error
-          try {
-            const caption = `• Title: ${data.title}\n• Quality: ${data.quality || q}`;
-            if (preferFormat === "mp4") {
-              await ctx.replyWithVideo({ source: `tmp_${videoID}.${preferFormat}` }, { caption });
-            } else {
-              await ctx.replyWithAudio({ source: `tmp_${videoID}.${preferFormat}` }, { caption });
-            }
-            try { await ctx.deleteMessage(progress.message_id); } catch {}
-            fs.unlinkSync(`tmp_${videoID}.${preferFormat}`);
-            return;
-          } catch (upErr) {
-            // upload failed (likely too large). send link instead.
-            try { await ctx.deleteMessage(progress.message_id); } catch {}
-            fs.unlinkSync(`tmp_${videoID}.${preferFormat}`);
-            return ctx.reply(`⚠️ File too large to upload. Download directly: ${data.downloadLink}`);
-          }
-        } catch (err) {
-          lastErr = err;
-          // try next quality
-          continue;
-        }
-      }
-      // all qualities failed
-      console.error(lastErr);
-      return ctx.reply("❌ Failed to prepare download. Try again later.");
-    }
-
-    // If user provided a direct YouTube link
-    if (isLink) {
-      const idMatch = firstArg.match(/(?:v=|be\/|shorts\/)([\w-]{11})/);
-      const videoID = idMatch ? idMatch[1] : null;
-      if (!videoID) return ctx.reply("❌ Invalid YouTube link.");
-
-      // determine preferred format
-      let pref = "mp4";
-      if (["-a","audio","mp3"].includes(action)) pref = "mp3";
-      if (["-i","info"].includes(action)) {
-        // fetch info and show
-        try {
-          const api = await baseApiUrl();
-          const { data } = await axios.get(`${api}/ytfullinfo?videoID=${videoID}`);
-          const caption =
-            `🎬 *${data.title}*\n⏳ ${(data.duration/60).toFixed(2)} mins\n📺 ${data.resolution}\n👀 ${data.view_count}\n🔗 https://youtu.be/${videoID}`;
-          return ctx.replyWithPhoto({ url: data.thumbnail }, { caption, parse_mode: "Markdown" });
-        } catch (e) {
-          console.error(e);
-          return ctx.reply("❌ Failed to fetch info.");
-        }
+        return ctx.replyWithPhoto(
+          { url: data.thumbnail },
+          { caption, parse_mode: "Markdown" }
+        );
       }
 
-      // download & send
-      return attemptDownloadAndSend(ctx, videoID, pref);
+      return downloadAndSend(ctx, ID, action === "audio" ? "mp3" : "mp4");
     }
 
-    // Otherwise SEARCH MODE
-    if (!query) return ctx.reply("❌ Provide a search keyword or a YouTube link.");
+    /* ---------------------- SEARCH MODE ---------------------- */
 
-    try {
-      const api = await baseApiUrl();
-      const res = (await axios.get(`${api}/ytFullSearch?songName=${encodeURIComponent(query)}`)).data;
-      const results = Array.isArray(res) ? res.slice(0,6) : [];
+    const api = await getAPI();
+    const results = (
+      await axios.get(`${api}/ytFullSearch?songName=${encodeURIComponent(query)}`)
+    ).data;
 
-      if (!results.length) return ctx.reply(`⭕ No results found for: ${query}`);
-
-      // Build clean search message
-      let text = `🔎 Results for *${query}*\n\n`;
-      results.forEach((r, i) => {
-        text += `${i+1}. *${r.title}*\n   ⏱ ${r.time} • ${r.channel.name}\n\n`;
+    if (!results?.length)
+      return ctx.reply(`⭕ No results for: *${query}*`, {
+        parse_mode: "Markdown",
       });
-      text += "Select a result:";
 
-      // create token for callbacks
-      const token = genToken();
-      // prepare inline keyboard (3 columns)
-      const inline = [];
-      for (let i=0;i<results.length;i++) {
-        const idx = i+1;
-        // one button per item with callback: youtube|token|idx|action
-        inline.push([{ text: `${idx}`, callback_data: `youtube|${token}|${idx}|${action}` }]);
-      }
-      // add row for quick format switches and cancel
-      inline.push([
-        { text: "🎧 Audio", callback_data: `youtube|${token}|format|mp3` },
-        { text: "🎥 Video", callback_data: `youtube|${token}|format|mp4` },
-        { text: "✖️ Cancel", callback_data: `youtube|${token}|cancel|0` }
-      ]);
+    const listToken = token();
 
-      // store handler data
-      global.inlineHandlers = global.inlineHandlers || {};
-      global.inlineHandlers[token] = {
-        results,
-        user: ctx.from.id,
-        chatId: ctx.chat.id
-      };
+    global.inlineHandlers = global.inlineHandlers || {};
+    global.inlineHandlers[listToken] = {
+      user: ctx.from.id,
+      results,
+      action,
+    };
 
-      // send message with inline keyboard
-      await ctx.reply(text, { parse_mode: "Markdown", reply_markup: { inline_keyboard: inline } });
-      return;
-    } catch (err) {
-      console.error(err);
-      return ctx.reply("❌ Search failed. Try later.");
-    }
+    let text = `🔎 *Results for:* _${query}_\n\n`;
+    results.slice(0, 6).forEach((v, i) => {
+      text += `${i + 1}. *${v.title}*\n   ⏱ ${v.time} • ${v.channel.name}\n\n`;
+    });
+
+    const keyboard = results.slice(0, 6).map((v, i) => [
+      {
+        text: `${i + 1}`,
+        callback_data: `youtube|${listToken}|${i + 1}`,
+      },
+    ]);
+
+    keyboard.push([
+      { text: "🎧 Audio", callback_data: `youtube|${listToken}|fmt|mp3` },
+      { text: "🎥 Video", callback_data: `youtube|${listToken}|fmt|mp4` },
+      { text: "✖ Cancel", callback_data: `youtube|${listToken}|cancel` },
+    ]);
+
+    return ctx.reply(text, {
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: keyboard },
+    });
   },
 
-  // optional: exported helper name to signal main.js nothing else needed
-};
+  /* -------------------- INLINE RESULT HANDLER -------------------- */
 
-// helper used by main.js callback handler (see snippet below)
-module.exports.handleCallback = async (ctx, token, type, payload) => {
-  // token, type: 'idx'|'format'|'cancel', payload: idx or format
-  const data = global.inlineHandlers?.[token];
-  if (!data) return ctx.answerCbQuery("Expired or invalid.");
+  handleCallback: async (ctx, key, type, val) => {
+    const cache = global.inlineHandlers?.[key];
+    if (!cache) return ctx.answerCbQuery("Expired.");
 
-  if (ctx.from.id !== data.user) {
-    return ctx.answerCbQuery("This selection isn't for you.", { show_alert: true });
-  }
+    if (ctx.from.id !== cache.user)
+      return ctx.answerCbQuery("Not for you.", { show_alert: true });
 
-  if (type === "cancel") {
-    delete global.inlineHandlers[token];
-    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(()=>{});
-    return ctx.answerCbQuery("Cancelled.");
-  }
-
-  // format change: user picked audio/video before selecting
-  if (type === "format") {
-    // store preferred format into handler for next selection stage
-    data.preferFormat = payload; // 'mp3' or 'mp4'
-    global.inlineHandlers[token] = data;
-    return ctx.answerCbQuery(`Format set to ${payload}. Now pick a number.`);
-  }
-
-  // index selection
-  if (type === "idx") {
-    const idx = parseInt(payload) - 1;
-    const item = data.results[idx];
-    if (!item) return ctx.answerCbQuery("Invalid choice.");
-
-    // get prefer format: use handler preferFormat or default to mp4 unless action indicates audio
-    const prefer = data.preferFormat || (["-a","audio","mp3"].includes(data.action) ? "mp3" : (["-i","info"].includes(data.action) ? "info" : "mp4"));
-
-    // if info
-    if (data.action === "-i" || data.action === "info") {
-      try {
-        const api = await baseApiUrl();
-        const { data: info } = await axios.get(`${api}/ytfullinfo?videoID=${item.id}`);
-        const caption =
-          `🎬 *${info.title}*\n⏳ ${(info.duration/60).toFixed(2)} mins\n📺 ${info.resolution}\n👀 ${info.view_count}\n🔗 https://youtu.be/${item.id}`;
-        await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(()=>{});
-        await ctx.replyWithPhoto({ url: info.thumbnail }, { caption, parse_mode: "Markdown" });
-        delete global.inlineHandlers[token];
-        return ctx.answerCbQuery();
-      } catch (e) {
-        console.error(e);
-        return ctx.answerCbQuery("Failed to fetch info.");
-      }
+    if (type === "cancel") {
+      delete global.inlineHandlers[key];
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      return ctx.answerCbQuery("Cancelled.");
     }
 
-    // otherwise download media
-    try {
-      await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(()=>{});
-      await ctx.answerCbQuery("Preparing download...");
-      // reuse attemptDownloadAndSend logic from run scope: implement inline here
-      const api = await baseApiUrl();
-      const fmt = (data.preferFormat) ? data.preferFormat : (prefer === "mp3" ? "mp3" : "mp4");
-
-      // fetch download info
-      const { data: dl } = await axios.get(`${api}/ytDl3?link=${item.id}&format=${fmt}&quality=0`);
-      if (!dl || !dl.downloadLink) return ctx.reply("❌ Can't prepare download.");
-
-      // progress message
-      const prog = await ctx.reply(`⏳ Downloading *${dl.title}* (${fmt})...`, { parse_mode: "Markdown" });
-
-      // download
-      const buffer = (await axios.get(dl.downloadLink, { responseType: "arraybuffer", timeout: 120000 })).data;
-      const tmp = `tmp_${item.id}.${fmt}`;
-      fs.writeFileSync(tmp, Buffer.from(buffer));
-
-      // upload or fallback
-      try {
-        if (fmt === "mp4") {
-          await ctx.replyWithVideo({ source: tmp }, { caption: `• ${dl.title}` });
-        } else {
-          await ctx.replyWithAudio({ source: tmp }, { caption: `• ${dl.title}` });
-        }
-        try { await ctx.deleteMessage(prog.message_id); } catch {}
-        fs.unlinkSync(tmp);
-        delete global.inlineHandlers[token];
-        return ctx.answerCbQuery("Done");
-      } catch (upErr) {
-        try { await ctx.deleteMessage(prog.message_id); } catch {}
-        fs.unlinkSync(tmp);
-        delete global.inlineHandlers[token];
-        return ctx.reply(`⚠️ File too large. Download link: ${dl.downloadLink}`);
-      }
-    } catch (err) {
-      console.error(err);
-      return ctx.reply("❌ Error while downloading.");
+    // format switch
+    if (type === "fmt") {
+      cache.forceFormat = val;
+      return ctx.answerCbQuery(`Format = ${val}`);
     }
-  }
 
-  return ctx.answerCbQuery();
+    // index selection
+    const idx = Number(type) - 1;
+    const item = cache.results[idx];
+    if (!item) return ctx.answerCbQuery("Invalid.");
+
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+    await ctx.answerCbQuery("Processing...");
+
+    const format =
+      cache.forceFormat ||
+      (cache.action === "audio" ? "mp3" : "mp4");
+
+    return downloadAndSend(ctx, item.id, format);
+  },
 };
