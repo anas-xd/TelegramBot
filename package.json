@@ -1,9 +1,9 @@
 {
   "name": "telegram-bot",
   "version": "1.0.0",
-  "main": "mirrykal.js",
+  "main": "main.js",
   "scripts": {
-    "start": "node mirrykal.js"
+    "start": "node main.js"
   },
   "dependencies": {
     "axios": "^1.6.7",
@@ -11,7 +11,6 @@
     "express": "^4.18.4",
     "fs-extra": "^11.2.0",
     "moment-timezone": "^0.5.40",
-    "node-telegram-bot-api": "^0.66.0",
     "telegraf": "^4.16.3",
     "yt-search": "2.10.4"
   },
