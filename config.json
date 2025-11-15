@@ -1,24 +1,25 @@
 {
-  // Bot info
   "botname": "MKBot",
   "prefix": "/",
 
-  // All privileged users (owner + admins merged)
+  "apiKey": "YOUR_TELEGRAM_BOT_TOKEN",
+
   "privilegedUsers": [
-    "owner_uid",     // Main owner
-    "admin_uid"      // Add more if needed
+    "owner_uid",
+    "admin_uid"
   ],
 
-  // Basic settings
   "language": "en",
   "timezone": "Asia/Kolkata",
   "debug": false,
 
-  // Reaction system
+  "webhookURL": "", 
+  // Example: "https://yourapp.onrender.com/webhook"
+
   "reactions": {
-    "enabled": true,           // Turn reactions on/off
-    "success": "✅",           // Used when command runs fine
-    "error": "❌",             // Used when command fails
-    "processing": "⏳"         // Used while waiting
+    "enabled": true,
+    "success": "✅",
+    "error": "❌",
+    "processing": "⏳"
   }
 }
