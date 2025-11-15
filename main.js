@@ -19,7 +19,7 @@ const LANG_DIR = path.join(__dirname, "languages");
 let defaultLang = require(`./languages/${config.language}.lang.js`);
 
 // Bot instance using ENV API key
-const bot = new Telegraf(process.env.BOT_TOKEN);
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
 global.commands = new Map();
 
