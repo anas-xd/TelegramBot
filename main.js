@@ -1,8 +1,4 @@
-// ============================================================
-//  MISS ﾉ尺卂 — MAIN ENGINE
-//  Clean • Stable • Webhook + Polling Auto • Multi-Language
-// ============================================================
-
+// MISS ﾉ尺卂 — MAIN ENGINE
 require("dotenv").config();
 
 const { Telegraf } = require("telegraf");
@@ -11,22 +7,19 @@ const path = require("path");
 const express = require("express");
 const moment = require("moment-timezone");
 const { execSync } = require("child_process");
-
 const config = require("./config.json");
 
-// Language handling
-const LANG_DIR = path.join(__dirname, "languages");
-let defaultLang = require(`./languages/${config.language}.lang.js`);
+// Token check
+if (!process.env.TELEGRAM_BOT_TOKEN) {
+  console.error("Missing TELEGRAM_BOT_TOKEN");
+  process.exit(1);
+}
 
-// Bot instance using ENV API key
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-
 global.commands = new Map();
 
-// ============================================================
-//  Load User Language Settings
-// ============================================================
-
+// User languages
+const LANG_DIR = path.join(__dirname, "languages");
 const userLangFile = "./data/user_languages.json";
 fs.ensureFileSync(userLangFile);
 
@@ -41,125 +34,88 @@ function saveUserLang() {
   fs.writeFileSync(userLangFile, JSON.stringify(userLang, null, 2));
 }
 
-// ============================================================
-//  Auto-Install Command Dependencies
-// ============================================================
-
-function ensureInstalled(moduleName) {
+function getLang(ctx) {
+  const code = userLang[ctx.from.id] || config.language;
   try {
-    require.resolve(moduleName);
+    return require(`./languages/${code}.lang.js`);
   } catch {
-    console.log(`📦 Installing missing module: ${moduleName}`);
-    execSync(`npm install ${moduleName} --save`, { stdio: "inherit" });
+    return require(`./languages/${config.language}.lang.js`);
   }
 }
 
-// ============================================================
-//  Load Commands Automatically
-// ============================================================
+// Auto-install deps
+function ensureInstalled(pkg) {
+  try {
+    require.resolve(pkg);
+  } catch {
+    console.log(`Installing: ${pkg}`);
+    execSync(`npm install ${pkg}`, { stdio: "inherit" });
+  }
+}
 
-fs.readdirSync("./commands").forEach((file) => {
-  if (!file.endsWith(".js")) return;
+// Load commands
+fs.readdirSync("./commands").forEach((f) => {
+  if (!f.endsWith(".js")) return;
+  const filePath = path.join(__dirname, "commands", f);
+  const code = fs.readFileSync(filePath, "utf8");
+  const reg = /require\(['"`](.*?)['"`]\)/g;
 
-  const filePath = path.join(__dirname, "commands", file);
-  const content = fs.readFileSync(filePath, "utf8");
-
-  const regex = /require\(['"`](.*?)['"`]\)/g;
-  let match;
-  while ((match = regex.exec(content))) {
-    const pkg = match[1];
-    if (!pkg.startsWith(".") && !pkg.startsWith("/")) {
-      ensureInstalled(pkg);
-    }
+  let m;
+  while ((m = reg.exec(code))) {
+    const pkg = m[1];
+    if (!pkg.startsWith(".")) ensureInstalled(pkg);
   }
 
   const cmd = require(filePath);
-
   if (cmd.name && typeof cmd.run === "function") {
     global.commands.set(config.prefix + cmd.name.toLowerCase(), cmd);
-    console.log(`✅ Loaded command: ${cmd.name}`);
+    console.log(`Loaded: ${cmd.name}`);
   }
 });
 
-// ============================================================
-//  Reaction Helper
-// ============================================================
-
+// Reactions
 function react(ctx, type) {
   if (!config.reactions.enabled) return;
   ctx.react?.(config.reactions[type]).catch(() => {});
 }
 
-// ============================================================
-//  Language Loader (Per User)
-// ============================================================
-
-function getLang(ctx) {
-  const id = ctx.from.id;
-  const chosen = userLang[id] || config.language;
-
-  try {
-    return require(`./languages/${chosen}.lang.js`);
-  } catch {
-    return defaultLang;
-  }
-}
-
-// ============================================================
-//  /start handler
-// ============================================================
-
+// /start
 bot.start((ctx) => {
   const L = getLang(ctx);
-  const name = ctx.from.first_name || "User";
-
-  ctx.reply(L.startMessage(name, config.botname, config.prefix), {
+  ctx.reply(L.startMessage(ctx.from.first_name, config.botname, config.prefix), {
     parse_mode: "Markdown",
   });
 });
 
-// ============================================================
-//  /lang command
-// ============================================================
-
+// /lang
 bot.command("lang", (ctx) => {
-  const args = ctx.message.text.split(" ");
-  const code = args[1];
+  const code = ctx.message.text.split(" ")[1];
+  if (!code) return ctx.reply("Use: /lang en");
 
-  if (!code)
-    return ctx.reply("Available: en, bn, hi, id\nUse: /lang en");
-
-  const langFile = path.join(LANG_DIR, `${code}.lang.js`);
-  if (!fs.existsSync(langFile)) return ctx.reply("❌ Language not found.");
+  if (!fs.existsSync(path.join(LANG_DIR, `${code}.lang.js`)))
+    return ctx.reply("Language not found");
 
   userLang[ctx.from.id] = code;
   saveUserLang();
-
-  const L = getLang(ctx);
-  ctx.reply(L.languageSet.replace("%1", code));
+  ctx.reply(getLang(ctx).languageSet.replace("%1", code));
 });
 
-// ============================================================
-//  TEXT Message Handler (Command System)
-// ============================================================
-
+// Text handler
 bot.on("text", async (ctx) => {
   const L = getLang(ctx);
-  const text = ctx.message.text.trim();
-  const lower = text.toLowerCase();
+  const txt = ctx.message.text.trim().toLowerCase();
 
-  let cmdName = "";
-  let args = [];
+  let cmdName = "",
+    args = [];
 
-  if (lower.startsWith(config.prefix)) {
-    [cmdName, ...args] = lower.slice(config.prefix.length).split(" ");
+  if (txt.startsWith(config.prefix)) {
+    [cmdName, ...args] = txt.slice(config.prefix.length).split(" ");
   } else {
-    const first = lower.split(" ")[0];
+    const first = txt.split(" ")[0];
     const cmd = global.commands.get(config.prefix + first);
     if (!cmd?.noPrefix) return;
-
     cmdName = first;
-    args = lower.split(" ").slice(1);
+    args = txt.split(" ").slice(1);
   }
 
   const command =
@@ -167,19 +123,13 @@ bot.on("text", async (ctx) => {
     global.commands.get(cmdName);
 
   if (!command) {
-    if (lower.startsWith(config.prefix)) {
-      return ctx.reply(
-        L.unknownCommand.replace("%1", cmdName) + "\n" + L.helpHint
-      );
-    }
+    if (txt.startsWith(config.prefix))
+      return ctx.reply(L.unknownCommand.replace("%1", cmdName) + "\n" + L.helpHint);
     return;
   }
 
-  const userId = String(ctx.from.id);
-  const isAdmin = config.privilegedUsers.includes(userId);
-
-  if (command.adminOnly && !isAdmin)
-    return ctx.reply(L.noPermission);
+  const isAdmin = config.privilegedUsers.includes(String(ctx.from.id));
+  if (command.adminOnly && !isAdmin) return ctx.reply(L.noPermission);
 
   try {
     react(ctx, "processing");
@@ -187,53 +137,42 @@ bot.on("text", async (ctx) => {
     await command.run(ctx);
     react(ctx, "success");
   } catch (err) {
-    console.error(`❌ Command error: ${cmdName}`, err);
+    console.error(err);
     react(ctx, "error");
     ctx.reply(L.commandError);
   }
 });
 
-// ============================================================
-//  EXPRESS SERVER (Webhook Support)
-// ============================================================
-
+// Express server
 const app = express();
-const PORT = config.connection.webhookPort || 3000;
+const PORT = process.env.PORT || config.connection.webhookPort || 3000;
 
 app.get("/", (req, res) => {
   res.send(
-    `MISS ﾉ尺卂 Active — ${moment()
+    `MISS ﾉ尺卂 — ${moment()
       .tz(config.timezone)
       .format("YYYY-MM-DD HH:mm:ss")}`
   );
 });
 
-// ============================================================
-//  Auto Webhook + Polling Switch
-// ============================================================
-
+// Webhook / Polling
 async function startBot() {
   const url = config.connection.webhookDomain;
 
   if (!url) {
-    console.log("📡 Webhook OFF → Polling mode.");
-    return bot.launch().then(() =>
-      console.log("🚀 MISS ﾉ尺卂 running (Polling Mode)")
-    );
+    console.log("Polling mode");
+    await bot.launch();
+    return console.log("Bot running");
   }
 
-  console.log("🔗 Webhook enabled:", url);
-
-  const fullURL = url + config.connection.webhookPath;
-
-  bot.telegram.setWebhook(fullURL);
+  const full = url + config.connection.webhookPath;
+  await bot.telegram.setWebhook(full);
   app.use(bot.webhookCallback(config.connection.webhookPath));
-
-  console.log("🚀 MISS ﾉ尺卂 running (Webhook Mode)");
+  console.log("Webhook mode");
 }
 
-app.listen(PORT, () =>
-  console.log(`🌍 Express server running on port ${PORT}`)
-);
-
+app.listen(PORT, () => console.log(`Server ${PORT}`));
 startBot();
+
+process.on("unhandledRejection", console.error);
+process.on("uncaughtException", console.error);
