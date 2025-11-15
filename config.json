@@ -1,33 +1,30 @@
 {
   "botname": "ᴍɪꜱꜱ ﾉ尺卂",
   "prefix": "/",
-  "privilegedUsers": [
-    "8054173978"
-  ],
+
+  "privilegedUsers": ["8054173978"],
+
   "owner": {
     "id": "8054173978",
     "name": "⏤͟͞〲ᗩᑎᗩՏ 𓊈乂ᗪ𓊉",
     "contact": "@xd_anas"
   },
+
   "language": "en",
   "timezone": "Asia/Dhaka",
   "debug": false,
+
   "reactions": {
     "enabled": true,
     "processing": "⏳",
     "success": "✅",
     "error": "❌"
   },
+
   "connection": {
     "mode": "auto",
     "webhookDomain": "https://telegrambot-wos1.onrender.com",
     "webhookPath": "/webhook",
     "webhookPort": 3000
-  },
-  "webhookURL": ""
-}",
-    "webhookPath": "/webhook",
-    "webhookPort": 3000
-  },
-  "webhookURL": ""
+  }
 }
