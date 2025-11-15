@@ -8,6 +8,7 @@ const express = require("express");
 const moment = require("moment-timezone");
 const { execSync } = require("child_process");
 const config = require("./config.json");
+const { cleanTemp } = require("./helpers/cleaner"); // ⬅ YT Auto-Cleaner
 
 // =============================
 // BOT TOKEN CHECK
@@ -19,6 +20,7 @@ if (!process.env.TELEGRAM_BOT_TOKEN) {
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 global.commands = new Map();
+global.pendingReplies = {}; // ⬅ Needed for YouTube reply-selection
 
 // =============================
 // LANGUAGE SYSTEM
@@ -47,27 +49,24 @@ function getLang(ctx) {
 }
 
 // =============================
-// AUTO-INSTALL DEPENDENCIES
+// LOAD COMMANDS + AUTO INSTALL
 // =============================
 function ensureInstalled(pkg) {
   try {
     require.resolve(pkg);
   } catch {
-    console.log(`📦 Installing missing package → ${pkg}`);
+    console.log(`📦 Installing → ${pkg}`);
     execSync(`npm install ${pkg}`, { stdio: "inherit" });
   }
 }
 
-// =============================
-// LOAD COMMANDS
-// =============================
 fs.readdirSync("./commands").forEach((file) => {
   if (!file.endsWith(".js")) return;
 
   const filePath = path.join(__dirname, "commands", file);
   const code = fs.readFileSync(filePath, "utf8");
-  const reg = /require\(['"`](.*?)['"`]\)/g;
 
+  const reg = /require\(['"`](.*?)['"`]\)/g;
   let match;
   while ((match = reg.exec(code))) {
     const pkg = match[1];
@@ -82,7 +81,7 @@ fs.readdirSync("./commands").forEach((file) => {
 });
 
 // =============================
-// REACTION HELPER
+// REACTIONS
 // =============================
 function react(ctx, name) {
   if (!config.reactions.enabled) return;
@@ -90,7 +89,7 @@ function react(ctx, name) {
 }
 
 // =============================
-// /start
+// START
 // =============================
 bot.start((ctx) => {
   const L = getLang(ctx);
@@ -116,18 +115,14 @@ bot.command("lang", (ctx) => {
 });
 
 // =============================
-// HANDLE REPLY (for song/search)
+// MESSAGE HANDLER (YT REPLY SAFE)
 // =============================
 bot.on("text", async (ctx) => {
-  // reply handler support
+  // reply selection handler (YouTube search support)
   if (ctx.message.reply_to_message?.message_id) {
-    const reply = global.pendingReplies?.[ctx.message.reply_to_message.message_id];
-    if (reply) {
-      const handler = [...global.commands.values()].find(
-        (c) => typeof c.handleReply === "function"
-      );
-      if (handler) return handler.handleReply(ctx);
-    }
+    const replyHandler =
+      global.pendingReplies[ctx.message.reply_to_message.message_id];
+    if (replyHandler) return replyHandler(ctx);
   }
 
   const L = getLang(ctx);
@@ -165,16 +160,19 @@ bot.on("text", async (ctx) => {
     react(ctx, "processing");
     ctx.args = args;
     await command.run(ctx);
+
+    cleanTemp(); // ⬅ Auto-clean after every command  
     react(ctx, "success");
   } catch (err) {
     console.log(err);
+    cleanTemp();
     react(ctx, "error");
     ctx.reply(L.commandError);
   }
 });
 
 // =============================
-// SERVER (Webhook Support)
+// EXPRESS SERVER / WEBHOOK
 // =============================
 const app = express();
 const PORT = process.env.PORT || config.connection.webhookPort || 3000;
@@ -188,19 +186,18 @@ app.get("/", (req, res) =>
 );
 
 // =============================
-// AUTO: WEBHOOK OR POLLING
+// AUTO SWITCH: WEBHOOK / POLLING
 // =============================
 async function startBot() {
   const url = config.connection.webhookDomain;
 
   if (!url) {
-    console.log("📡 Webhook OFF → Polling mode.");
+    console.log("📡 Polling Mode Enabled");
     await bot.launch();
     return console.log("🚀 MISS ﾉ尺卂 running (Polling)");
   }
 
   const fullURL = url + config.connection.webhookPath;
-
   await bot.telegram.setWebhook(fullURL);
   app.use(bot.webhookCallback(config.connection.webhookPath));
 
@@ -209,7 +206,6 @@ async function startBot() {
 }
 
 app.listen(PORT, () => console.log(`🌍 Server running on port ${PORT}`));
-
 startBot();
 
 process.on("unhandledRejection", console.error);
