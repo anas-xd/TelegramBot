@@ -6,90 +6,110 @@ const express = require("express");
 const moment = require("moment-timezone");
 
 const config = require("./config.json");
-const lang = require("./languages/en.lang"); // Language file added
+const lang = require("./languages/en.lang");
 
 require("dotenv").config();
+
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 global.commands = new Map();
 
-// Auto install missing required modules from command files
+/* ============================================================
+   AUTO INSTALL MODULES USED INSIDE COMMAND FILES
+============================================================ */
 function ensureModuleInstalled(moduleName) {
   try {
     require.resolve(moduleName);
   } catch (e) {
-    console.log(`ðŸ“¦ Installing missing module: ${moduleName}`);
+    console.log(`📦 Installing missing module: ${moduleName}`);
     execSync(`npm install ${moduleName} --save`, { stdio: "inherit" });
   }
 }
 
-// Load commands from /commands
+/* ============================================================
+   LOAD COMMANDS FROM /commands FOLDER
+============================================================ */
 fs.readdirSync("./commands").forEach(file => {
-  if (file.endsWith(".js")) {
-    const commandPath = path.join(__dirname, "commands", file);
-    const commandContent = fs.readFileSync(commandPath, "utf-8");
+  if (!file.endsWith(".js")) return;
 
-    const requireRegex = /requireî€["'](.+?)["']î€/g;
-    let match;
-    while ((match = requireRegex.exec(commandContent)) !== null) {
-      const moduleName = match[1];
-      if (!moduleName.startsWith(".") && !moduleName.startsWith("/")) {
-        ensureModuleInstalled(moduleName);
-      }
-    }
+  const commandPath = path.join(__dirname, "commands", file);
+  const commandContent = fs.readFileSync(commandPath, "utf-8");
 
-    const command = require(commandPath);
-    if (command.name && command.run) {
-      global.commands.set(config.prefix + command.name, command);
-      console.log(`âœ… Loaded: ${command.name}`);
+  // Detect required packages
+  const requireRegex = /require\(['"`](.*?)['"`]\)/g;
+  let match;
+
+  while ((match = requireRegex.exec(commandContent)) !== null) {
+    const moduleName = match[1];
+    if (!moduleName.startsWith(".") && !moduleName.startsWith("/")) {
+      ensureModuleInstalled(moduleName);
     }
+  }
+
+  const command = require(commandPath);
+
+  if (command.name && typeof command.run === "function") {
+    global.commands.set(config.prefix + command.name.toLowerCase(), command);
+    console.log(`✅ Loaded command: ${command.name}`);
   }
 });
 
-// /start command
+/* ============================================================
+   /START COMMAND
+============================================================ */
 bot.start((ctx) => {
-  const welcomeMsg = lang.startMessage(ctx.from.first_name, config.botname, config.prefix);
+  const name = ctx.from.first_name || "User";
+  const welcomeMsg = lang.startMessage(name, config.botname, config.prefix);
+
   ctx.reply(welcomeMsg, { parse_mode: "Markdown" });
 });
 
-// Handle all commands
+/* ============================================================
+   COMMAND HANDLER
+============================================================ */
 bot.on("text", async (ctx) => {
-  const text = ctx.message.text || "";
+  const text = ctx.message.text.trim();
   const lower = text.toLowerCase();
 
   let cmdName = "";
   let args = [];
 
-  if (text.startsWith(config.prefix)) {
-    [cmdName, ...args] = text.slice(config.prefix.length).trim().split(" ");
+  // Prefixed command
+  if (lower.startsWith(config.prefix)) {
+    [cmdName, ...args] = lower.slice(config.prefix.length).split(" ");
   } else {
+    // No-prefix commands
     const firstWord = lower.split(" ")[0];
-    const possibleCommand = global.commands.get(config.prefix + firstWord) || global.commands.get(firstWord);
+    const noPrefixCmd = global.commands.get(config.prefix + firstWord);
 
-    if (!possibleCommand?.noPrefix) return;
+    if (!noPrefixCmd?.noPrefix) return;
 
     cmdName = firstWord;
     args = lower.split(" ").slice(1);
   }
 
-  const command = global.commands.get(config.prefix + cmdName) || global.commands.get(cmdName);
+  const command =
+    global.commands.get(config.prefix + cmdName) ||
+    global.commands.get(cmdName);
+
   if (!command) {
     if (text.startsWith(config.prefix)) {
-      const wrongCommand = cmdName || "";
-      return ctx.reply(`${lang.unknownCommand.replace("%1", wrongCommand)}\n${lang.helpHint}`);
+      return ctx.reply(lang.unknownCommand.replace("%1", cmdName) + "\n" + lang.helpHint);
     }
     return;
   }
 
   try {
-    ctx.message.text = `${config.prefix}${cmdName} ${args.join(" ")}`.trim();
+    ctx.args = args;
     await command.run(ctx);
   } catch (err) {
-    console.error(`âŒ Error in command ${cmdName}:`, err);
+    console.error(`❌ Error in command ${cmdName}:`, err);
     ctx.reply(lang.commandError);
   }
 });
 
-// Dummy express server for uptime (Render)
+/* ============================================================
+   EXPRESS SERVER (For Uptime on Render / Railway)
+============================================================ */
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -98,10 +118,12 @@ app.get("/", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`ðŸŒ Dummy server listening on port ${PORT}`);
+  console.log(`🌐 Express server running on port ${PORT}`);
 });
 
-// Launch the bot
+/* ============================================================
+   LAUNCH BOT
+============================================================ */
 bot.launch().then(() => {
-  console.log("ðŸŸ¢ Bot is running!");
+  console.log("🚀 Telegram bot is live!");
 });
