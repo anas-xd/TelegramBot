@@ -1,25 +1,57 @@
 {
-  "botname": "MKBot",
-  "prefix": "/",
+  // ============================================================
+  // BASIC BOT INFO
+  // ============================================================
+  "botname": "MKBot",            // Display name of your bot
+  "prefix": "/",                 // Command prefix (ex: /help)
 
-  "apiKey": "YOUR_TELEGRAM_BOT_TOKEN",
-
+  // ============================================================
+  // PRIVILEGED USERS (Owner + Admins merged)
+  // Add all user IDs who can use admin commands
+  // ============================================================
   "privilegedUsers": [
-    "owner_uid",
-    "admin_uid"
+    "10001",                     // Owner
+    "10002"                      // Admin (add more if needed)
   ],
 
-  "language": "en",
-  "timezone": "Asia/Kolkata",
-  "debug": false,
+  // ============================================================
+  // OWNER INFO (Used in lang file & system messages)
+  // ============================================================
+  "owner": {
+    "id": "10001",
+    "name": "Your Name",
+    "contact": "@yourTelegram"
+  },
 
-  "webhookURL": "", 
-  // Example: "https://yourapp.onrender.com/webhook"
+  // ============================================================
+  // BOT SETTINGS
+  // ============================================================
+  "language": "en",               // Default language
+  "timezone": "Asia/Kolkata",     // Bot timezone
+  "debug": false,                 // Enable logs for debugging
 
+  // ============================================================
+  // REACTION SYSTEM (Icons for bot status)
+  // ============================================================
   "reactions": {
-    "enabled": true,
+    "enabled": true,              // Turn on/off reactions
+    "processing": "⏳",
     "success": "✅",
-    "error": "❌",
-    "processing": "⏳"
+    "error": "❌"
+  },
+
+  // ============================================================
+  // CONNECTION SETTINGS
+  // Only one will be used based on your hosting:
+  // - localhost or railway → polling
+  // - vercel or render → webhook
+  // ============================================================
+  "connection": {
+    "mode": "auto",               // "auto" | "polling" | "webhook"
+
+    // (Webhook only)
+    "webhookDomain": "",          // Example: "https://your-app.onrender.com"
+    "webhookPath": "/webhook",    // Endpoint for updates
+    "webhookPort": 3000           // Port for express server
   }
 }
