@@ -1,7 +1,9 @@
 // ============================================================
 //  MISS ﾉ尺卂 — MAIN ENGINE
-//  Clean • Stable • Dynamic Language • Webhook+Polling Auto
+//  Clean • Stable • Webhook + Polling Auto • Multi-Language
 // ============================================================
+
+require("dotenv").config();
 
 const { Telegraf } = require("telegraf");
 const fs = require("fs-extra");
@@ -12,33 +14,35 @@ const { execSync } = require("child_process");
 
 const config = require("./config.json");
 
-// Dynamic language files
+// Language handling
 const LANG_DIR = path.join(__dirname, "languages");
+let defaultLang = require(`./languages/${config.language}.lang.js`);
 
-// Load default language
-let lang = require(`./languages/${config.language}.lang.js`);
+// Bot instance using ENV API key
+const bot = new Telegraf(process.env.BOT_TOKEN);
 
-const bot = new Telegraf(config.apiKey);
 global.commands = new Map();
 
-// User language settings (saved persistently)
+// ============================================================
+//  Load User Language Settings
+// ============================================================
+
 const userLangFile = "./data/user_languages.json";
 fs.ensureFileSync(userLangFile);
 
 let userLang = {};
 try {
-  userLang = JSON.parse(fs.readFileSync(userLangFile, "utf-8") || "{}");
+  userLang = JSON.parse(fs.readFileSync(userLangFile, "utf8") || "{}");
 } catch {
   userLang = {};
 }
 
-// Save user languages
 function saveUserLang() {
   fs.writeFileSync(userLangFile, JSON.stringify(userLang, null, 2));
 }
 
 // ============================================================
-//  Auto Install Missing Command Dependencies
+//  Auto-Install Command Dependencies
 // ============================================================
 
 function ensureInstalled(moduleName) {
@@ -51,24 +55,26 @@ function ensureInstalled(moduleName) {
 }
 
 // ============================================================
-//  Load Commands
+//  Load Commands Automatically
 // ============================================================
 
 fs.readdirSync("./commands").forEach((file) => {
   if (!file.endsWith(".js")) return;
+
   const filePath = path.join(__dirname, "commands", file);
-  const content = fs.readFileSync(filePath, "utf-8");
+  const content = fs.readFileSync(filePath, "utf8");
 
   const regex = /require\(['"`](.*?)['"`]\)/g;
-  let m;
-  while ((m = regex.exec(content))) {
-    const pkg = m[1];
+  let match;
+  while ((match = regex.exec(content))) {
+    const pkg = match[1];
     if (!pkg.startsWith(".") && !pkg.startsWith("/")) {
       ensureInstalled(pkg);
     }
   }
 
   const cmd = require(filePath);
+
   if (cmd.name && typeof cmd.run === "function") {
     global.commands.set(config.prefix + cmd.name.toLowerCase(), cmd);
     console.log(`✅ Loaded command: ${cmd.name}`);
@@ -85,22 +91,22 @@ function react(ctx, type) {
 }
 
 // ============================================================
-//  Dynamic Language Helper
+//  Language Loader (Per User)
 // ============================================================
 
 function getLang(ctx) {
   const id = ctx.from.id;
-  const userLanguage = userLang[id] || config.language;
+  const chosen = userLang[id] || config.language;
 
   try {
-    return require(`./languages/${userLanguage}.lang.js`);
+    return require(`./languages/${chosen}.lang.js`);
   } catch {
-    return lang; // fallback
+    return defaultLang;
   }
 }
 
 // ============================================================
-//  /start
+//  /start handler
 // ============================================================
 
 bot.start((ctx) => {
@@ -113,35 +119,35 @@ bot.start((ctx) => {
 });
 
 // ============================================================
-//  /lang <code>
+//  /lang command
 // ============================================================
 
-bot.command("lang", async (ctx) => {
+bot.command("lang", (ctx) => {
   const args = ctx.message.text.split(" ");
   const code = args[1];
 
   if (!code)
-    return ctx.reply("Available languages: en, hi, id, es\nUse: /lang en");
+    return ctx.reply("Available: en, bn, hi, id\nUse: /lang en");
 
-  const filePath = path.join(LANG_DIR, `${code}.lang.js`);
-  if (!fs.existsSync(filePath))
-    return ctx.reply("❌ Language file not found.");
+  const langFile = path.join(LANG_DIR, `${code}.lang.js`);
+  if (!fs.existsSync(langFile)) return ctx.reply("❌ Language not found.");
 
   userLang[ctx.from.id] = code;
   saveUserLang();
 
   const L = getLang(ctx);
-  return ctx.reply(L.languageSet.replace("%1", code));
+  ctx.reply(L.languageSet.replace("%1", code));
 });
 
 // ============================================================
-//  Command Handler
+//  TEXT Message Handler (Command System)
 // ============================================================
 
 bot.on("text", async (ctx) => {
   const L = getLang(ctx);
   const text = ctx.message.text.trim();
   const lower = text.toLowerCase();
+
   let cmdName = "";
   let args = [];
 
@@ -149,8 +155,8 @@ bot.on("text", async (ctx) => {
     [cmdName, ...args] = lower.slice(config.prefix.length).split(" ");
   } else {
     const first = lower.split(" ")[0];
-    const noPrefix = global.commands.get(config.prefix + first);
-    if (!noPrefix?.noPrefix) return;
+    const cmd = global.commands.get(config.prefix + first);
+    if (!cmd?.noPrefix) return;
 
     cmdName = first;
     args = lower.split(" ").slice(1);
@@ -169,29 +175,30 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  const isPrivileged = config.privilegedUsers.includes(String(ctx.from.id));
+  const userId = String(ctx.from.id);
+  const isAdmin = config.privilegedUsers.includes(userId);
 
-  if (command.adminOnly && !isPrivileged)
-    return ctx.reply("⚠️ You don't have permission.");
+  if (command.adminOnly && !isAdmin)
+    return ctx.reply(L.noPermission);
 
   try {
     react(ctx, "processing");
     ctx.args = args;
     await command.run(ctx);
     react(ctx, "success");
-  } catch (e) {
-    console.log(`❌ Error in command [${cmdName}]`, e);
+  } catch (err) {
+    console.error(`❌ Command error: ${cmdName}`, err);
     react(ctx, "error");
     ctx.reply(L.commandError);
   }
 });
 
 // ============================================================
-//  Express Server (Webhook Support)
+//  EXPRESS SERVER (Webhook Support)
 // ============================================================
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = config.connection.webhookPort || 3000;
 
 app.get("/", (req, res) => {
   res.send(
@@ -202,20 +209,31 @@ app.get("/", (req, res) => {
 });
 
 // ============================================================
-//  AUTO: Webhook + Polling
+//  Auto Webhook + Polling Switch
 // ============================================================
 
 async function startBot() {
-  if (!config.webhookURL) {
-    console.log("📡 Using POLLING mode");
-    return bot.launch().then(() => console.log("🚀 Bot running (Polling)!"));
+  const url = config.connection.webhookDomain;
+
+  if (!url) {
+    console.log("📡 Webhook OFF → Polling mode.");
+    return bot.launch().then(() =>
+      console.log("🚀 MISS ﾉ尺卂 running (Polling Mode)")
+    );
   }
 
-  console.log("🔗 Webhook:", config.webhookURL);
-  bot.telegram.setWebhook(config.webhookURL);
-  app.use(bot.webhookCallback("/webhook"));
-  console.log("🚀 Bot running (Webhook)!");
+  console.log("🔗 Webhook enabled:", url);
+
+  const fullURL = url + config.connection.webhookPath;
+
+  bot.telegram.setWebhook(fullURL);
+  app.use(bot.webhookCallback(config.connection.webhookPath));
+
+  console.log("🚀 MISS ﾉ尺卂 running (Webhook Mode)");
 }
 
-app.listen(PORT, () => console.log(`🌍 Server on ${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🌍 Express server running on port ${PORT}`)
+);
+
 startBot();
